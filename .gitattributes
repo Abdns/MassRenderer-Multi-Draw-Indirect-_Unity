@@ -1,1 +1,4 @@
+*.shader linguist-language=HLSL
+*.hlsl linguist-language=HLSL
+*.compute linguist-language=HLSL
 Assets/Samples/RenderData/*.asset filter=lfs diff=lfs merge=lfs -text
