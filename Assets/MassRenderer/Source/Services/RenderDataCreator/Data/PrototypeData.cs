@@ -6,7 +6,11 @@ using VATBakerSystem;
 
 namespace MassRendererSystem.Data
 {
-    [System.Serializable]
+    /// <summary>
+    /// Data structure defining a single prototype (mesh variant) for mass rendering.
+    /// Contains mesh, texture skins, and optional animation baking data.
+    /// </summary>
+    [Serializable]
     public struct PrototypeData
     {
         [SerializeField]
@@ -16,12 +20,33 @@ namespace MassRendererSystem.Data
         [SerializeField]
         private VATBakeRequest _animationBakerData;
 
+        /// <summary>
+        /// The mesh geometry for this prototype.
+        /// </summary>
         public Mesh Mesh => _mesh;
+
+        /// <summary>
+        /// Array of texture skins/variants for this prototype.
+        /// </summary>
         public Texture2D[] Textures => _textures;
+
+        /// <summary>
+        /// Animation baking configuration (animator + skinned mesh).
+        /// </summary>
         public VATBakeRequest AnimationBakerData => _animationBakerData;
     }
+
+    /// <summary>
+    /// Extension methods for processing arrays of PrototypeData.
+    /// Provides utilities for mesh merging, texture array creation, and offset calculations.
+    /// </summary>
     public static class UnitPrototypeDataExtensions
     {
+        /// <summary>
+        /// Extracts all non-null meshes from the prototype array.
+        /// </summary>
+        /// <param name="unitPrototypes">Array of prototype data.</param>
+        /// <returns>List of meshes from all prototypes.</returns>
         public static List<Mesh> GetAllMeshes(this PrototypeData[] unitPrototypes)
         {
             var meshes = new List<Mesh>(unitPrototypes.Length);
@@ -32,6 +57,13 @@ namespace MassRendererSystem.Data
             return meshes;
         }
 
+        /// <summary>
+        /// Creates a Texture2DArray from all prototype textures.
+        /// All textures must have the same dimensions and format.
+        /// </summary>
+        /// <param name="prototypes">Array of prototype data.</param>
+        /// <returns>Combined texture array, or null if no textures found.</returns>
+        /// <exception cref="InvalidOperationException">Thrown if texture sizes or formats don't match.</exception>
         public static Texture2DArray CreateTextureArray(this PrototypeData[] prototypes)
         {
             Texture2D refTex = null;
@@ -84,6 +116,11 @@ namespace MassRendererSystem.Data
             return textureArray;
         }
 
+        /// <summary>
+        /// Calculates the starting index offset for each prototype's textures in the combined array.
+        /// </summary>
+        /// <param name="prototypes">Array of prototype data.</param>
+        /// <returns>Array of starting indices for each prototype's textures.</returns>
         public static int[] GetSkinOffsets(this PrototypeData[] prototypes)
         {
             var skinOffsets = new int[prototypes.Length];
@@ -100,6 +137,11 @@ namespace MassRendererSystem.Data
             return skinOffsets;
         }
 
+        /// <summary>
+        /// Gets the number of texture skins for each prototype mesh.
+        /// </summary>
+        /// <param name="prototypes">Array of prototype data.</param>
+        /// <returns>Array of skin counts per prototype.</returns>
         public static int[] GetSkinsPerMesh(this PrototypeData[] prototypes)
         {
             var skinsPerMesh = new int[prototypes.Length];
@@ -110,6 +152,14 @@ namespace MassRendererSystem.Data
             return skinsPerMesh;
         }
 
+        /// <summary>
+        /// Merges multiple meshes into a single mesh for efficient MDI rendering.
+        /// Outputs segment data for locating each original mesh within the merged mesh.
+        /// UV2 channel stores vertex indices for VAT sampling.
+        /// </summary>
+        /// <param name="meshes">List of meshes to merge.</param>
+        /// <param name="segments">Output array of segment data for each merged mesh.</param>
+        /// <returns>Single merged mesh containing all input meshes.</returns>
         public static Mesh CreateMergedMesh(this List<Mesh> meshes, out PrototypesMeshSegment[] segments)
         {
             long totalVerts = 0;

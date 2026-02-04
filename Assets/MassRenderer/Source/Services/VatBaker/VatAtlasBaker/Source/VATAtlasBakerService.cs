@@ -4,16 +4,32 @@ using UnityEngine;
 
 namespace VATBakerSystem
 {
+    /// <summary>
+    /// Service for packing multiple VAT bake results into a single texture atlas.
+    /// Combines position and normal textures from multiple meshes into unified atlases.
+    /// </summary>
     public class VATAtlasBakerService
     {
         private const string ATLAS_NAME = "VAT_Atlas";
         private readonly VATBakerSettings _defaults;
 
+        /// <summary>
+        /// Creates a new VAT atlas baker service.
+        /// </summary>
+        /// <param name="defaults">Baker configuration settings.</param>
+        /// <exception cref="ArgumentNullException">Thrown if defaults is null.</exception>
         public VATAtlasBakerService(VATBakerSettings defaults)
         {
             _defaults = defaults ?? throw new ArgumentNullException(nameof(defaults));
         }
 
+        /// <summary>
+        /// Packs multiple VAT bake results into a single atlas.
+        /// Textures are arranged horizontally, with normalized UV coordinates calculated for each segment.
+        /// </summary>
+        /// <param name="bakeResults">Array of individual mesh VAT bake results.</param>
+        /// <returns>Combined atlas data with packed textures and segment metadata.</returns>
+        /// <exception cref="InvalidOperationException">Thrown if atlas size exceeds GPU limits.</exception>
         public VATAtlasData BakeAtlas(VATBakeResult[] bakeResults)
         {
             CalculateAtlasSize(bakeResults, out int atlasWidth, out int atlasHeight);
@@ -24,7 +40,6 @@ namespace VATBakerSystem
                 throw new InvalidOperationException($"Generated atlas size ({atlasWidth}x{atlasHeight}) exceeds the GPU limit of {maxTextureSize}px.");
             }
 
-            // Если данных нет вообще (все объекты статичны), атласы не нужны (null)
             if (atlasWidth == 0 || atlasHeight == 0)
             {
                 return BakeAllVATSets(bakeResults, null, null, 0, 0);

@@ -6,11 +6,21 @@ using Object = UnityEngine.Object;
 
 namespace MassRendererSystem.Data
 {
+    /// <summary>
+    /// MonoBehaviour component for creating and saving RenderStaticData assets.
+    /// Attach to a GameObject and configure prototypes in the Inspector.
+    /// </summary>
     public class RenderDataCreator : MonoBehaviour
     {
         [SerializeField] private PrototypeData[] _prototypes;
         [SerializeField] private VATBakerSettings _bakerSettings;
 
+        /// <summary>
+        /// Generates render data from configured prototypes and saves it as an asset.
+        /// Includes merged meshes, texture arrays, and VAT atlases as sub-assets.
+        /// </summary>
+        /// <param name="savePath">Folder path where the asset will be saved.</param>
+        /// <returns>The generated RenderStaticData asset.</returns>
         public RenderStaticData GenerateAndSave(string savePath)
         {
             var renderData = RenderDataBuilder.BuildRenderData(_prototypes, _bakerSettings);
@@ -29,7 +39,10 @@ namespace MassRendererSystem.Data
             {
                 foreach (var mesh in renderData.PrototypeMeshes)
                 {
-                    if (mesh != null) subAssets.Add(mesh);
+                    if (mesh != null)
+                    {
+                        subAssets.Add(mesh);
+                    }
                 }
             }
 

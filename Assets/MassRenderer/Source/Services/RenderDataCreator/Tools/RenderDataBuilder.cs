@@ -5,8 +5,21 @@ using VATBakerSystem;
 
 namespace MassRendererSystem.Data
 {
+    /// <summary>
+    /// Static utility class for building RenderStaticData from prototype definitions.
+    /// Handles mesh merging, texture array creation, and VAT atlas baking.
+    /// </summary>
     public static class RenderDataBuilder
     {
+        /// <summary>
+        /// Builds complete render data from prototype definitions.
+        /// Processes meshes, textures, and animations into GPU-ready format.
+        /// </summary>
+        /// <param name="prototypes">Array of prototype definitions.</param>
+        /// <param name="bakerSettings">VAT baking configuration.</param>
+        /// <returns>Complete RenderStaticData ready for MassRenderer.</returns>
+        /// <exception cref="ArgumentException">Thrown if prototypes array is null or empty.</exception>
+        /// <exception cref="ArgumentNullException">Thrown if bakerSettings is null.</exception>
         public static RenderStaticData BuildRenderData(PrototypeData[] prototypes, VATBakerSettings bakerSettings)
         {
             if (prototypes == null || prototypes.Length == 0)

@@ -7,8 +7,22 @@ using Object = UnityEngine.Object;
 
 namespace MassRendererSystem.Utils
 {
+    /// <summary>
+    /// Utility class for saving Unity assets with sub-assets to the AssetDatabase.
+    /// Editor-only functionality.
+    /// </summary>
     public static class AssetSaver
     {
+        /// <summary>
+        /// Saves a main asset with optional sub-assets to the specified path.
+        /// Creates the folder if it doesn't exist.
+        /// </summary>
+        /// <param name="mainAsset">The primary asset to save.</param>
+        /// <param name="folderPath">Folder path (must be inside Assets folder).</param>
+        /// <param name="fileName">Name for the asset file (without extension).</param>
+        /// <param name="subAssets">Optional collection of sub-assets to embed.</param>
+        /// <exception cref="ArgumentNullException">Thrown if mainAsset is null.</exception>
+        /// <exception cref="ArgumentException">Thrown if path is not inside Assets folder.</exception>
         public static void SaveAsset(Object mainAsset, string folderPath, string fileName, IEnumerable<Object> subAssets = null)
         {
             if (mainAsset == null)

@@ -1,3 +1,4 @@
 ﻿<Solution>
   <Project Path="MassRenderer.csproj" />
+  <Project Path="Assembly-CSharp.csproj" />
 </Solution>

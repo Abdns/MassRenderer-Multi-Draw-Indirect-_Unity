@@ -4,16 +4,31 @@ using UnityEngine;
 
 namespace VATBakerSystem
 {
+    /// <summary>
+    /// Service for baking skinned mesh animations into Vertex Animation Textures (VAT).
+    /// Samples animation frames and stores vertex positions/normals in textures for GPU playback.
+    /// </summary>
     public class VATBakerService
     {
         private const float TEXEL_SAMPLE_OFFSET = 0.5f;
         private readonly VATBakerSettings _defaults;
 
+        /// <summary>
+        /// Creates a new VAT baker service with the specified settings.
+        /// </summary>
+        /// <param name="defaults">Baker configuration settings.</param>
+        /// <exception cref="ArgumentNullException">Thrown if defaults is null.</exception>
         public VATBakerService(VATBakerSettings defaults)
         {
             _defaults = defaults ?? throw new ArgumentNullException(nameof(defaults));
         }
 
+        /// <summary>
+        /// Bakes all animation clips from the request into VAT textures.
+        /// Creates a temporary copy of the GameObject to sample animations without affecting the original.
+        /// </summary>
+        /// <param name="requestData">The bake request containing animator and skinned mesh renderer.</param>
+        /// <returns>Bake result with position/normal textures, or null if baking failed.</returns>
         public VATBakeResult Bake(VATBakeRequest requestData)
         {
             if (!IsValidInput(requestData))

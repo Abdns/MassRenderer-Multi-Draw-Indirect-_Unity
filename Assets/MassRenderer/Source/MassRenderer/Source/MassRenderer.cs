@@ -7,24 +7,32 @@ using static UnityEngine.GraphicsBuffer;
 
 namespace MassRendererSystem
 {
+    /// <summary>
+    /// High-performance GPU-based instanced renderer using Multi-Draw Indirect (MDI) rendering.
+    /// Supports Vertex Animation Textures (VAT) for skeletal animation playback on GPU.
+    /// </summary>
     public sealed class MassRenderer : IDisposable
     {
-        private readonly RenderStaticData _data;
-        private readonly MassRendererParams _params;
+        private readonly RenderStaticData _mrData;
+        private readonly MassRendererParams _mrParams;
 
-        private Material _mdiMaterial;
+        private Material _mrMaterial;
         private MaterialPropertyBlock _propertyBlock;
 
         private GraphicsBuffer _multiDrawCommandsBuffer;
-        private RenderParams _rParamas;
+        private RenderParams _rParams;
 
         private ComputeBuffer _instancesIdOffset;
         private ComputeBuffer _instanceDataBuffer;
         private ComputeBuffer _vatClipsDataBuffer;
 
-        private bool _initialized;
-        private bool _disposed;
+        private bool _hasMaterial;
+        private bool _isInitialized;
+        private bool _isDisposed;
 
+        /// <summary>
+        /// Gets the compute buffer containing per-instance data (transforms, animation state, etc.).
+        /// </summary>
         public ComputeBuffer InstancesDataBuffer
         {
             get
@@ -42,128 +50,159 @@ namespace MassRendererSystem
             }
         }
 
-
+        /// <summary>
+        /// Creates a new MassRenderer instance with auto-generated material based on shader type.
+        /// </summary>
+        /// <param name="data">Static render data containing meshes, textures, and VAT atlas.</param>
+        /// <param name="mrParams">Renderer configuration parameters.</param>
         public MassRenderer(RenderStaticData data, MassRendererParams mrParams)
         {
-            _data = data;
-            _params = mrParams;
+            _mrData = data;
+            _mrParams = mrParams;
         }
 
+        /// <summary>
+        /// Creates a new MassRenderer instance with a custom material.
+        /// </summary>
+        /// <param name="data">Static render data containing meshes, textures, and VAT atlas.</param>
+        /// <param name="mrParams">Renderer configuration parameters.</param>
+        /// <param name="mdiMaterial">Custom material for MDI rendering.</param>
         public MassRenderer(RenderStaticData data, MassRendererParams mrParams, Material mdiMaterial)
         {
-            _data = data;
-            _params = mrParams;
-            _mdiMaterial = mdiMaterial;
+            _mrData = data;
+            _mrParams = mrParams;
+            _mrMaterial = mdiMaterial;
         }
 
-
+        /// <summary>
+        /// Initializes the renderer by creating GPU buffers and setting up render parameters.
+        /// Must be called before Render() or RebuildDrawCommands().
+        /// </summary>
+        /// <exception cref="ObjectDisposedException">Thrown if the renderer has been disposed.</exception>
+        /// <exception cref="InvalidOperationException">Thrown if already initialized.</exception>
         public void Initialize()
         {
-            if (_disposed)
+            if (_isDisposed)
             {
                 throw new ObjectDisposedException(nameof(MassRenderer));
             }
 
-            if (_initialized)
+            if (_isInitialized)
             {
                 throw new InvalidOperationException("MassRenderer already initialized.");
             }
 
-            if(_mdiMaterial == null)
+            if(_mrMaterial == null)
             {
                 CreateMaterialFallback();
             }
 
             CreateBuffers();
             BuildRenderParams();
+            UpdateInstancesBuffers();
 
-            _initialized = true;
+            _isInitialized = true;
         }
 
+        /// <summary>
+        /// Renders all instances using GPU instancing with Multi-Draw Indirect.
+        /// Should be called every frame.
+        /// </summary>
         public void Render()
         {
             UpdateInstancesBuffers();
 
-            Graphics.RenderMeshIndirect(_rParamas, _data.MergedPrototypeMeshes, _multiDrawCommandsBuffer, _data.PrototypeMeshes.Count);
+            Graphics.RenderMeshIndirect(_rParams, _mrData.MergedPrototypeMeshes, _multiDrawCommandsBuffer, _mrData.PrototypeMeshes.Count);
         }
 
-
+        /// <summary>
+        /// Rebuilds the indirect draw commands buffer with new instance counts per prototype mesh.
+        /// Call this when the distribution of instances across mesh types changes.
+        /// </summary>
+        /// <param name="instanceCounts">Array of instance counts for each prototype mesh.</param>
+        /// <exception cref="InvalidOperationException">Thrown if renderer is not initialized.</exception>
         public void RebuildDrawCommands(int[] instanceCounts)
         {
-            if (!_initialized)
+            if (!_isInitialized)
             {
                 throw new InvalidOperationException("MassRenderer not initializes. Call Initialize() first.");
             }
 
             _multiDrawCommandsBuffer?.Release();
 
-            SetCommandsBuffer(_data.PrototypeMeshes.Count, instanceCounts, _data.PrototypesData.mergedMeshData);
+            SetCommandsBuffer(_mrData.PrototypeMeshes.Count, instanceCounts, _mrData.PrototypesData.mergedMeshData);
 
             BindMaterialData();
         }
 
+        /// <summary>
+        /// Sets a global transformation matrix applied to all instances.
+        /// Useful for positioning the entire crowd/group in world space.
+        /// </summary>
+        /// <param name="globalMatrix">The world transformation matrix to apply.</param>
         public void SetGlobalTransform(Matrix4x4 globalMatrix)
         {
-            if (_mdiMaterial != null)
+            if (_mrMaterial != null)
             {
-                _mdiMaterial.SetMatrix(MDIShaderIDs.GlobalTransformID, globalMatrix);
+                _mrMaterial.SetMatrix(MDIShaderIDs.GlobalTransformID, globalMatrix);
             }
         }
 
         private void BuildRenderParams()
         {
-            RenderParams rParamas = new RenderParams(_mdiMaterial);
-            rParamas.worldBounds = _params.RenderBounds;
+            RenderParams rParamas = new RenderParams(_mrMaterial);
+            rParamas.worldBounds = _mrParams.RenderBounds;
             rParamas.matProps = _propertyBlock;
             rParamas.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
             rParamas.receiveShadows = true;
 
-            _rParamas = rParamas;
+            _rParams = rParamas;
         }
 
         private void UpdateInstancesBuffers()
         {
-            _mdiMaterial.SetBuffer(MDIShaderIDs.InstanceDataBufferID, _instanceDataBuffer);
+            _mrMaterial.SetBuffer(MDIShaderIDs.InstanceDataBufferID, _instanceDataBuffer);
         }
 
         private void CreateBuffers()
         {
-            _instanceDataBuffer = new ComputeBuffer(_params.InstanceCount, Marshal.SizeOf(typeof(InstanceData)));
-            _instancesIdOffset = new ComputeBuffer(_data.PrototypeMeshes.Count, Marshal.SizeOf(typeof(int)));
+            _instanceDataBuffer = new ComputeBuffer(_mrParams.InstanceCount, Marshal.SizeOf(typeof(InstanceData)));
+            _instancesIdOffset = new ComputeBuffer(_mrData.PrototypeMeshes.Count, Marshal.SizeOf(typeof(int)));
 
-            if (_params.IsVATEnable)
+            if (_mrParams.IsVATEnable)
             {
-                _vatClipsDataBuffer = new ComputeBuffer(_data.AtlasData.allClips.Length, Marshal.SizeOf(typeof(VATAtlasAnimationClip)));
+                _vatClipsDataBuffer = new ComputeBuffer(_mrData.AtlasData.allClips.Length, Marshal.SizeOf(typeof(VATAtlasAnimationClip)));
             }
         }
 
         private void CreateMaterialFallback()
         {
-            Shader shader = MDIShaderIDs.GetShader(_params.ShaderType);
+            Shader shader = MDIShaderIDs.GetShader(_mrParams.ShaderType);
 
-            _mdiMaterial = new Material(shader);
+            _mrMaterial = new Material(shader);
+            _hasMaterial = true;
             _propertyBlock = new MaterialPropertyBlock();
         }
 
         private void BindMaterialData()
         {
-            _mdiMaterial.SetTexture(MDIShaderIDs.TextureSkinsID, _data.TextureSkins);
+            _mrMaterial.SetTexture(MDIShaderIDs.TextureSkinsID, _mrData.TextureSkins);
 
-            _mdiMaterial.SetBuffer(MDIShaderIDs.InstanceIdOffsetID, _instancesIdOffset);
+            _mrMaterial.SetBuffer(MDIShaderIDs.InstanceIdOffsetID, _instancesIdOffset);
 
-            if (_params.IsVATEnable)
+            if (_mrParams.IsVATEnable)
             {
-                _mdiMaterial.EnableKeyword(MDIShaderIDs.KEYWORD_VAT_ON);
+                _mrMaterial.EnableKeyword(MDIShaderIDs.KEYWORD_VAT_ON);
 
-                _mdiMaterial.SetTexture(MDIShaderIDs.PositionVATAtlasID, _data.AtlasData.PositionAtlas);
-                _mdiMaterial.SetTexture(MDIShaderIDs.NormalVATAtlasID, _data.AtlasData.NormalAtlas);
+                _mrMaterial.SetTexture(MDIShaderIDs.PositionVATAtlasID, _mrData.AtlasData.PositionAtlas);
+                _mrMaterial.SetTexture(MDIShaderIDs.NormalVATAtlasID, _mrData.AtlasData.NormalAtlas);
 
-                _vatClipsDataBuffer.SetData(_data.AtlasData.allClips);
-                _mdiMaterial.SetBuffer(MDIShaderIDs.VATClipsBufferID, _vatClipsDataBuffer);
+                _vatClipsDataBuffer.SetData(_mrData.AtlasData.allClips);
+                _mrMaterial.SetBuffer(MDIShaderIDs.VATClipsBufferID, _vatClipsDataBuffer);
             }
             else
             {
-                _mdiMaterial.DisableKeyword(MDIShaderIDs.KEYWORD_VAT_ON);
+                _mrMaterial.DisableKeyword(MDIShaderIDs.KEYWORD_VAT_ON);
             }
         }
 
@@ -215,25 +254,35 @@ namespace MassRendererSystem
             return offsets;
         }
 
+        /// <summary>
+        /// Releases all GPU resources.
+        /// </summary>
         public void Dispose()
         {
-            if (_disposed)
+            if (_isDisposed)
             {
                 return;
             }
 
-            _disposed = true;
+            _isDisposed = true;
 
             _instanceDataBuffer?.Release();
+            _instanceDataBuffer = null;
+
             _instancesIdOffset?.Release();
+            _instancesIdOffset = null;
+
             _vatClipsDataBuffer?.Release();
-            _multiDrawCommandsBuffer?.Release(); 
+            _vatClipsDataBuffer = null;
+
+            _multiDrawCommandsBuffer?.Release();
+            _multiDrawCommandsBuffer = null;
 
 
-            if (_mdiMaterial != null)
+            if (_mrMaterial != null && _hasMaterial)
             {
-                UnityEngine.Object.Destroy(_mdiMaterial);
-                _mdiMaterial = null;
+                UnityEngine.Object.Destroy(_mrMaterial);
+                _mrMaterial = null;
             }
         }
     }
