@@ -47,6 +47,7 @@
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "UnityIndirect.cginc"
+            #include "Assets/MassRenderer/Source/Shaders/Common/InstanceData.hlsl"
 
             #ifdef ENABLE_VAT
                 #include "Assets/MassRenderer/Source/Shaders/Common/VATSampling.hlsl"
@@ -61,15 +62,6 @@
 
             TEXTURE2D_ARRAY(_TextureSkins);
             SAMPLER(sampler_TextureSkins);
-
-            struct InstanceData
-            {
-                int      meshIndex;
-                int      textureSkinIndex;
-                int      animationIndex;
-                float    animationSpeed;
-                float4x4 objectToWorld;
-            };
 
             StructuredBuffer<InstanceData> _InstanceDataBuffer;
             StructuredBuffer<int> _InstanceIdOffset;
@@ -101,8 +93,7 @@
                 float2 uv         : TEXCOORD2;
                 float  fogFactor  : TEXCOORD3;
                 
-                uint   instanceID : TEXCOORD4;
-                uint   cmdID      : TEXCOORD5;
+                nointerpolation int textureSkinIndex : TEXCOORD4;
             };
 
             Varyings Vert(Attributes input)
@@ -120,9 +111,9 @@
 
                 #ifdef ENABLE_VAT
                     uint localVertexID = (uint)input.uv2.x;
-                    VATClipAtlasInfo clipInfo = _VATClipsDataBuffer[instanceData.animationIndex];
+                    VATClipAtlasInfo clipInfo = _VATClipsDataBuffer[GetAnimationIndex(instanceData)];
 
-                    float2 vatUV = CalculateVATUV(clipInfo, localVertexID, instanceData.animationSpeed);
+                    float2 vatUV = CalculateVATUV(clipInfo, localVertexID, GetAnimationSpeed(instanceData));
                     
                     positionOS = SampleAnimPosition(_PositionVATAtlas, sampler_PositionVATAtlas, vatUV);
                     normalOS   = SampleAnimNormal(_NormalVATAtlas, sampler_PositionVATAtlas, vatUV);
@@ -145,18 +136,14 @@
                 
                 output.fogFactor = ComputeFogFactor(output.positionCS.z);
                 
-                output.instanceID = instanceID;
-                output.cmdID = cmdID;
+                output.textureSkinIndex = GetTextureSkinIndex(instanceData);
 
                 return output;
             }
 
             half4 Frag(Varyings input) : SV_Target
             {
-                int index = _InstanceIdOffset[input.cmdID] + input.instanceID;
-                InstanceData instanceData = _InstanceDataBuffer[index];
-
-                half4 albedo = SAMPLE_TEXTURE2D_ARRAY(_TextureSkins, sampler_TextureSkins, input.uv, instanceData.textureSkinIndex) * _BaseColor;
+                half4 albedo = SAMPLE_TEXTURE2D_ARRAY(_TextureSkins, sampler_TextureSkins, input.uv, input.textureSkinIndex) * _BaseColor;
 
                 InputData inputData = (InputData)0;
                 inputData.positionWS = input.positionWS;
@@ -212,6 +199,7 @@
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl" 
             #include "UnityIndirect.cginc"
+            #include "Assets/MassRenderer/Source/Shaders/Common/InstanceData.hlsl"
 
             #ifdef ENABLE_VAT
                 #include "Assets/MassRenderer/Source/Shaders/Common/VATSampling.hlsl"
@@ -220,15 +208,6 @@
             CBUFFER_START(UnityPerMaterial)
                 float4x4 _GlobalTransform;
             CBUFFER_END
-
-            struct InstanceData
-            {
-                int      meshIndex;
-                int      textureSkinIndex;
-                int      animationIndex;
-                float    animationSpeed;
-                float4x4 localToWorldMatrix;
-            };
 
             StructuredBuffer<InstanceData> _InstanceDataBuffer;
             StructuredBuffer<int> _InstanceIdOffset;
@@ -272,9 +251,9 @@
 
                 #ifdef ENABLE_VAT
                     uint localVertexID = (uint)input.uv2.x;
-                    VATClipAtlasInfo clipInfo = _VATClipsDataBuffer[instanceData.animationIndex];
+                    VATClipAtlasInfo clipInfo = _VATClipsDataBuffer[GetAnimationIndex(instanceData)];
                     
-                    float2 vatUV = CalculateVATUV(clipInfo, localVertexID, instanceData.animationSpeed);
+                    float2 vatUV = CalculateVATUV(clipInfo, localVertexID, GetAnimationSpeed(instanceData));
                     
                     positionOS = SampleAnimPosition(_PositionVATAtlas, sampler_PositionVATAtlas, vatUV);
                     normalOS   = SampleAnimNormal(_NormalVATAtlas, sampler_PositionVATAtlas, vatUV);
@@ -286,8 +265,8 @@
                 float4 positionPreInstance = mul(_GlobalTransform, float4(positionOS, 1.0));
                 float3 normalPreInstance   = mul((float3x3)_GlobalTransform, normalOS);
                 
-                float4 positionWS = mul(instanceData.localToWorldMatrix, positionPreInstance);
-                float3 normalWS   = normalize(mul((float3x3)instanceData.localToWorldMatrix, normalPreInstance));
+                float4 positionWS = mul(instanceData.objectToWorld, positionPreInstance);
+                float3 normalWS   = normalize(mul((float3x3)instanceData.objectToWorld, normalPreInstance));
 
                 Varyings output;
 

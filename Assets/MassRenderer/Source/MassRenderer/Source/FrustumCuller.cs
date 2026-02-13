@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using MassRendererSystem.Data;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace MassRendererSystem
 {
@@ -25,6 +26,7 @@ namespace MassRendererSystem
         private readonly int _totalInstanceCount;
         private readonly int _prototypeCount;
         private readonly float _boundingSphereRadius;
+        private readonly float _maxRenderDistance;
 
         private int _kernelReset;
         private int _kernelCull;
@@ -34,16 +36,17 @@ namespace MassRendererSystem
         private int _cullThreadGroups;
         private int _argsThreadGroups;
 
-        private ComputeBuffer _visibleOutputBuffer;
-        private ComputeBuffer _visibleCountBuffer;
-        private ComputeBuffer _prototypeOffsetsBuffer;
-        private ComputeBuffer _segmentToPrototypeBuffer;
+        private GraphicsBuffer _visibleOutputBuffer;
+        private GraphicsBuffer _visibleCountBuffer;
+        private GraphicsBuffer _prototypeOffsetsBuffer;
+        private GraphicsBuffer _segmentToPrototypeBuffer;
 
-        private GraphicsBuffer _stagingDrawArgsBuffer;
         private GraphicsBuffer _originalDrawArgsBuffer;
 
+        private readonly Plane[] _frustumPlanesCachedRaw = new Plane[6];
         private readonly Vector4[] _frustumPlanesCached = new Vector4[6];
         private Matrix4x4 _globalTransform = Matrix4x4.identity;
+        private float _globalScale = 1f;
 
         private int _commandCount;
 
@@ -51,7 +54,7 @@ namespace MassRendererSystem
         private bool _disposed;
 
         /// <summary>Buffer containing visible instance data after culling.</summary>
-        public ComputeBuffer VisibleOutputBuffer => _visibleOutputBuffer;
+        public GraphicsBuffer VisibleOutputBuffer => _visibleOutputBuffer;
 
         /// <summary>
         /// Creates a new <see cref="FrustumCuller"/> instance.
@@ -60,16 +63,23 @@ namespace MassRendererSystem
         /// <param name="totalInstanceCount">Total number of instances.</param>
         /// <param name="prototypeCount">Number of unique mesh prototypes.</param>
         /// <param name="boundingSphereRadius">Bounding sphere radius of the prototype mesh.</param>
+        /// <param name="cullingShader">Compute shader that performs frustum culling.</param>
+        /// <param name="totalInstanceCount">Total number of instances.</param>
+        /// <param name="prototypeCount">Number of unique mesh prototypes.</param>
+        /// <param name="boundingSphereRadius">Bounding sphere radius of the prototype mesh.</param>
+        /// <param name="maxRenderDistance">Maximum render distance. 0 or negative = no distance culling.</param>
         public FrustumCuller(
             ComputeShader cullingShader,
             int totalInstanceCount,
             int prototypeCount,
-            float boundingSphereRadius)
+            float boundingSphereRadius,
+            float maxRenderDistance = 0f)
         {
             _cullingCS = cullingShader ?? throw new ArgumentNullException(nameof(cullingShader));
             _totalInstanceCount = totalInstanceCount;
             _prototypeCount = prototypeCount;
             _boundingSphereRadius = boundingSphereRadius;
+            _maxRenderDistance = maxRenderDistance;
         }
 
         /// <summary>
@@ -81,7 +91,7 @@ namespace MassRendererSystem
         /// <param name="segments">Mesh segments describing draw commands.</param>
         /// <param name="cachedDrawCommands">Original IndirectDraw arguments.</param>
         public void Initialize(
-            ComputeBuffer sourceBuffer,
+            GraphicsBuffer sourceBuffer,
             int[] instanceCounts,
             PrototypesMeshSegment[] segments,
             GraphicsBuffer.IndirectDrawIndexedArgs[] cachedDrawCommands)
@@ -99,14 +109,14 @@ namespace MassRendererSystem
             _commandCount = segments.Length;
             _argsThreadGroups = Mathf.CeilToInt((float)_commandCount / ARGS_BLOCK_SIZE);
 
-            _visibleOutputBuffer = new ComputeBuffer(_totalInstanceCount, Marshal.SizeOf(typeof(InstanceData)));
-            _visibleCountBuffer = new ComputeBuffer(_prototypeCount, sizeof(uint));
+            _visibleOutputBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured,_totalInstanceCount,Marshal.SizeOf(typeof(InstanceData)));
+            _visibleCountBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured,_prototypeCount,sizeof(uint));
+            _prototypeOffsetsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured,_prototypeCount,sizeof(uint));
 
-            _prototypeOffsetsBuffer = new ComputeBuffer(_prototypeCount, sizeof(uint));
             uint[] offsets = CalculateOffsets(instanceCounts);
             _prototypeOffsetsBuffer.SetData(offsets);
 
-            _segmentToPrototypeBuffer = new ComputeBuffer(_commandCount, sizeof(uint));
+            _segmentToPrototypeBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured,_commandCount,sizeof(uint));
             uint[] segToProto = new uint[_commandCount];
             for (int i = 0; i < _commandCount; i++)
             {
@@ -115,15 +125,7 @@ namespace MassRendererSystem
             _segmentToPrototypeBuffer.SetData(segToProto);
 
             int totalUints = _commandCount * ARGS_PER_COMMAND;
-            _stagingDrawArgsBuffer = new GraphicsBuffer(
-                GraphicsBuffer.Target.Structured | GraphicsBuffer.Target.CopySource,
-                totalUints,
-                sizeof(uint));
-
-            _originalDrawArgsBuffer = new GraphicsBuffer(
-                GraphicsBuffer.Target.Structured,
-                totalUints,
-                sizeof(uint));
+            _originalDrawArgsBuffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured,totalUints,sizeof(uint));
 
             uint[] flatArgs = FlattenDrawArgs(cachedDrawCommands, _commandCount);
             _originalDrawArgsBuffer.SetData(flatArgs);
@@ -140,18 +142,20 @@ namespace MassRendererSystem
 
         /// <summary>
         /// Sets the global transformation matrix used when computing instance world positions.
+        /// Pre-computes the max scale factor on CPU to avoid per-instance computation on GPU.
         /// </summary>
         /// <param name="globalMatrix">Global transformation matrix.</param>
         public void SetGlobalTransform(Matrix4x4 globalMatrix)
         {
             _globalTransform = globalMatrix;
+            _globalScale = ComputeMaxScale(globalMatrix);
         }
 
-        /// <summary>
-        /// Performs frustum culling for the given camera and updates draw arguments.
+        /// Performs frustum culling for the given camera and writes updated draw arguments
+        /// directly into the IndirectArgs buffer (no staging/copy step).
         /// </summary>
         /// <param name="camera">Camera whose frustum planes are used for culling.</param>
-        /// <param name="drawArgsBuffer">Target IndirectDraw arguments buffer where updated data is copied.</param>
+        /// <param name="drawArgsBuffer">Target IndirectDraw arguments buffer. Must have Structured | IndirectArguments targets.</param>
         public void Cull(Camera camera, GraphicsBuffer drawArgsBuffer)
         {
             if (!_initialized || _disposed) return;
@@ -161,12 +165,51 @@ namespace MassRendererSystem
 
             _cullingCS.SetVectorArray(FrustumCullingShaderIDs.FrustumPlanesID, _frustumPlanesCached);
             _cullingCS.SetMatrix(FrustumCullingShaderIDs.CullGlobalTransformID, _globalTransform);
+            _cullingCS.SetFloat(FrustumCullingShaderIDs.GlobalScaleID, _globalScale);
+
+            Vector3 camPos = camera.transform.position;
+            _cullingCS.SetVector(FrustumCullingShaderIDs.CameraPositionID, new Vector4(camPos.x, camPos.y, camPos.z, 0f));
+
+            float maxDistSq = _maxRenderDistance > 0f ? _maxRenderDistance * _maxRenderDistance : 0f;
+            _cullingCS.SetFloat(FrustumCullingShaderIDs.MaxRenderDistanceSqID, maxDistSq);
+
+            _cullingCS.SetBuffer(_kernelUpdateArgs, FrustumCullingShaderIDs.StagingDrawArgsID, drawArgsBuffer);
 
             _cullingCS.Dispatch(_kernelReset, _resetThreadGroups, 1, 1);
             _cullingCS.Dispatch(_kernelCull, _cullThreadGroups, 1, 1);
             _cullingCS.Dispatch(_kernelUpdateArgs, _argsThreadGroups, 1, 1);
+        }
 
-            Graphics.CopyBuffer(_stagingDrawArgsBuffer, drawArgsBuffer);
+        /// <summary>
+        /// Records frustum culling dispatches into a CommandBuffer instead of
+        /// executing them immediately. This avoids CPU-GPU sync points and allows
+        /// the GPU to batch all compute work together.
+        /// </summary>
+        /// <param name="cmd">CommandBuffer to record into.</param>
+        /// <param name="camera">Camera whose frustum planes are used for culling.</param>
+        /// <param name="drawArgsBuffer">Target IndirectDraw arguments buffer. Must have Structured | IndirectArguments targets.</param>
+        public void DispatchCullingCmd(CommandBuffer cmd, Camera camera, GraphicsBuffer drawArgsBuffer)
+        {
+            if (!_initialized || _disposed) return;
+            if (camera == null || drawArgsBuffer == null || cmd == null) return;
+
+            ExtractFrustumPlanes(camera);
+
+            cmd.SetComputeVectorArrayParam(_cullingCS, FrustumCullingShaderIDs.FrustumPlanesID, _frustumPlanesCached);
+            cmd.SetComputeMatrixParam(_cullingCS, FrustumCullingShaderIDs.CullGlobalTransformID, _globalTransform);
+            cmd.SetComputeFloatParam(_cullingCS, FrustumCullingShaderIDs.GlobalScaleID, _globalScale);
+
+            Vector3 camPos = camera.transform.position;
+            cmd.SetComputeVectorParam(_cullingCS, FrustumCullingShaderIDs.CameraPositionID, new Vector4(camPos.x, camPos.y, camPos.z, 0f));
+
+            float maxDistSq = _maxRenderDistance > 0f ? _maxRenderDistance * _maxRenderDistance : 0f;
+            cmd.SetComputeFloatParam(_cullingCS, FrustumCullingShaderIDs.MaxRenderDistanceSqID, maxDistSq);
+
+            cmd.SetComputeBufferParam(_cullingCS, _kernelUpdateArgs, FrustumCullingShaderIDs.StagingDrawArgsID, drawArgsBuffer);
+
+            cmd.DispatchCompute(_cullingCS, _kernelReset, _resetThreadGroups, 1, 1);
+            cmd.DispatchCompute(_cullingCS, _kernelCull, _cullThreadGroups, 1, 1);
+            cmd.DispatchCompute(_cullingCS, _kernelUpdateArgs, _argsThreadGroups, 1, 1);
         }
 
         /// <summary>
@@ -181,21 +224,23 @@ namespace MassRendererSystem
             _visibleCountBuffer?.Release();
             _prototypeOffsetsBuffer?.Release();
             _segmentToPrototypeBuffer?.Release();
-            _stagingDrawArgsBuffer?.Release();
             _originalDrawArgsBuffer?.Release();
 
             _visibleOutputBuffer = null;
             _visibleCountBuffer = null;
             _prototypeOffsetsBuffer = null;
             _segmentToPrototypeBuffer = null;
-            _stagingDrawArgsBuffer = null;
             _originalDrawArgsBuffer = null;
         }
 
         /// <summary>
         /// Binds all buffers to the corresponding compute shader kernels.
         /// </summary>
-        private void BindBuffers(ComputeBuffer sourceBuffer)
+        /// <summary>
+        /// Binds all buffers to the corresponding compute shader kernels.
+        /// Note: _StagingDrawArgs is bound per-frame in Cull() to the actual draw args buffer.
+        /// </summary>
+        private void BindBuffers(GraphicsBuffer sourceBuffer)
         {
             _cullingCS.SetBuffer(_kernelReset, FrustumCullingShaderIDs.VisibleCountPerPrototypeID, _visibleCountBuffer);
 
@@ -206,24 +251,25 @@ namespace MassRendererSystem
 
             _cullingCS.SetBuffer(_kernelUpdateArgs, FrustumCullingShaderIDs.VisibleCountPerPrototypeID, _visibleCountBuffer);
             _cullingCS.SetBuffer(_kernelUpdateArgs, FrustumCullingShaderIDs.SegmentToPrototypeID, _segmentToPrototypeBuffer);
-            _cullingCS.SetBuffer(_kernelUpdateArgs, FrustumCullingShaderIDs.StagingDrawArgsID, _stagingDrawArgsBuffer);
             _cullingCS.SetBuffer(_kernelUpdateArgs, FrustumCullingShaderIDs.OriginalDrawArgsID, _originalDrawArgsBuffer);
         }
 
         /// <summary>
         /// Extracts six frustum planes from the camera and stores them in a cached array.
+        /// Uses pre-allocated Plane[] to avoid GC allocations every frame.
         /// </summary>
         private void ExtractFrustumPlanes(Camera camera)
         {
-            Plane[] planes = GeometryUtility.CalculateFrustumPlanes(camera);
+            Matrix4x4 vpMatrix = camera.projectionMatrix * camera.worldToCameraMatrix;
+            GeometryUtility.CalculateFrustumPlanes(vpMatrix, _frustumPlanesCachedRaw);
 
             for (int i = 0; i < 6; i++)
             {
                 _frustumPlanesCached[i] = new Vector4(
-                    planes[i].normal.x,
-                    planes[i].normal.y,
-                    planes[i].normal.z,
-                    planes[i].distance);
+                    _frustumPlanesCachedRaw[i].normal.x,
+                    _frustumPlanesCachedRaw[i].normal.y,
+                    _frustumPlanesCachedRaw[i].normal.z,
+                    _frustumPlanesCachedRaw[i].distance);
             }
         }
 
@@ -259,6 +305,18 @@ namespace MassRendererSystem
                 current += (uint)instanceCounts[i];
             }
             return offsets;
+        }
+
+        /// <summary>
+        /// Computes the maximum axis scale from a transformation matrix on CPU.
+        /// This avoids redundant per-instance computation in the compute shader.
+        /// </summary>
+        private static float ComputeMaxScale(Matrix4x4 m)
+        {
+            float sx = new Vector3(m.m00, m.m10, m.m20).magnitude;
+            float sy = new Vector3(m.m01, m.m11, m.m21).magnitude;
+            float sz = new Vector3(m.m02, m.m12, m.m22).magnitude;
+            return Mathf.Max(sx, Mathf.Max(sy, sz));
         }
     }
 }

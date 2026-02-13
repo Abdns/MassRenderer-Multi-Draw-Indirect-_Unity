@@ -14,6 +14,9 @@ namespace MassRendererSystem.Data
         public static readonly int PrototypeCountID = Shader.PropertyToID("_PrototypeCount");
         public static readonly int CommandCountID = Shader.PropertyToID("_CommandCount");
         public static readonly int CullGlobalTransformID = Shader.PropertyToID("_CullGlobalTransform");
+        public static readonly int GlobalScaleID = Shader.PropertyToID("_GlobalScale");
+        public static readonly int CameraPositionID = Shader.PropertyToID("_CameraPosition");
+        public static readonly int MaxRenderDistanceSqID = Shader.PropertyToID("_MaxRenderDistanceSq");
         public static readonly int InputBufferID = Shader.PropertyToID("_InputBuffer");
         public static readonly int OutputBufferID = Shader.PropertyToID("_OutputBuffer");
         public static readonly int VisibleCountPerPrototypeID = Shader.PropertyToID("_VisibleCountPerPrototype");

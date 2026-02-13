@@ -3,6 +3,7 @@
 #define SIMULATION_BLOCK_SIZE 128
 
 #include "Assets/MassRenderer/Source/Shaders/Common/MatrixUtils.hlsl"
+#include "Assets/MassRenderer/Source/Shaders/Common/InstanceData.hlsl"
 
 int _InstanceCount;
 float4 _BoundCenter;
@@ -17,15 +18,6 @@ struct AgentData
     float speed; 
 };
 
-struct InstanceData
-{
-    int    meshIndex; 
-    int    textureSkinIndex;
-    int    animationIndex;
-    float  animationSpeed;
-    float4x4 tsr;
-}; 
-
 RWStructuredBuffer<AgentData> _AgentDataBufferWrite;
 RWStructuredBuffer<InstanceData> _InstanceDataBufferWrite;
 
@@ -35,14 +27,14 @@ float3 WrapPosition(float3 position)
     float3 center = _BoundCenter.xyz;
     float3 bounds = _BoundSize.xyz;
 
-    float3 min = center - bounds * 0.5;
-    float3 max = center + bounds * 0.5;
+    float3 mn = center - bounds * 0.5;
+    float3 mx = center + bounds * 0.5;
 
-    pos.x = pos.x < min.x ? float3(center + bounds * 0.5).x : pos.x;
-    pos.x = pos.x > max.x ? float3(center - bounds * 0.5).x : pos.x;
+    pos.x = pos.x < mn.x ? float3(center + bounds * 0.5).x : pos.x;
+    pos.x = pos.x > mx.x ? float3(center - bounds * 0.5).x : pos.x;
 
-    pos.z = pos.z < min.z ? float3(center + bounds * 0.5).z : pos.z;
-    pos.z = pos.z > max.z ? float3(center - bounds * 0.5).z : pos.z;
+    pos.z = pos.z < mn.z ? float3(center + bounds * 0.5).z : pos.z;
+    pos.z = pos.z > mx.z ? float3(center - bounds * 0.5).z : pos.z;
 
     return pos;
 }
@@ -60,7 +52,7 @@ void CSMain (uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint3 GTi
     agnet.position += displacement;  
     agnet.position = WrapPosition(agnet.position);
 
-    instance.tsr = BuildTRS(agnet.position, agnet.direction, agnet.scale);
+    instance.objectToWorld = BuildTRS(agnet.position, agnet.direction, agnet.scale);
 
     _AgentDataBufferWrite[index] = agnet;    
     _InstanceDataBufferWrite[index] = instance; 

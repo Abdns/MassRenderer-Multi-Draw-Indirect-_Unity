@@ -45,13 +45,13 @@ public class CrowdSimulation
     private Vector3 _boundSize = new Vector3(100, 10, 100);
     private Vector3 _boundPosition = Vector3.zero;
 
-    private ComputeBuffer _agentBuffer;
-    private readonly ComputeBuffer _instanceBuffer;
+    private GraphicsBuffer _agentBuffer;
+    private readonly GraphicsBuffer _instanceBuffer;
     private readonly RenderStaticData _data;
     private readonly ComputeShader _computeCS;
     public int[] InstanceCounts { get; private set; }
 
-    public CrowdSimulation(int unitsCount, ComputeBuffer instanceBuffer, RenderStaticData data, ComputeShader computeCS)
+    public CrowdSimulation(int unitsCount, GraphicsBuffer instanceBuffer, RenderStaticData data, ComputeShader computeCS)
     {
         _unitsCount = unitsCount;
         _instanceBuffer = instanceBuffer;
@@ -65,7 +65,10 @@ public class CrowdSimulation
 
         _threadGroupSize = Mathf.CeilToInt((float)_unitsCount / SIMULATION_BLOCK_SIZE);
 
-        _agentBuffer = new ComputeBuffer(_unitsCount, Marshal.SizeOf(typeof(AgentData)));
+        _agentBuffer = new GraphicsBuffer(
+            GraphicsBuffer.Target.Structured,
+            _unitsCount,
+            Marshal.SizeOf(typeof(AgentData)));
 
         FillBuffers();
 

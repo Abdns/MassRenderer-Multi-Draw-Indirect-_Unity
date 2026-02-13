@@ -22,9 +22,9 @@ namespace MassRendererSystem
         private GraphicsBuffer _multiDrawCommandsBuffer;
         private RenderParams _rParams;
 
-        private ComputeBuffer _instancesIdOffset;
-        private ComputeBuffer _instanceDataBuffer;
-        private ComputeBuffer _vatClipsDataBuffer;
+        private GraphicsBuffer _instancesIdOffset;
+        private GraphicsBuffer _instanceDataBuffer;
+        private GraphicsBuffer _vatClipsDataBuffer;
 
         private FrustumCuller _frustumCuller;
         private Camera _cullingCamera;
@@ -38,9 +38,9 @@ namespace MassRendererSystem
         private bool _isDisposed;
 
         /// <summary>
-        /// Gets the compute buffer containing per-instance data (transforms, animation state, etc.).
+        /// Gets the graphics buffer containing per-instance data (transforms, animation state, etc.).
         /// </summary>
-        public ComputeBuffer InstancesDataBuffer
+        public GraphicsBuffer InstancesDataBuffer
         {
             get
             {
@@ -236,15 +236,25 @@ namespace MassRendererSystem
         {
             int prototypeCount = _mrData.PrototypeMeshes.Count;
 
-            _instanceDataBuffer = new ComputeBuffer(_mrParams.InstanceCount, Marshal.SizeOf(typeof(InstanceData)));
-            _instancesIdOffset = new ComputeBuffer(prototypeCount, Marshal.SizeOf(typeof(int)));
+            _instanceDataBuffer = new GraphicsBuffer(
+                GraphicsBuffer.Target.Structured,
+                _mrParams.InstanceCount,
+                Marshal.SizeOf(typeof(InstanceData)));
+
+            _instancesIdOffset = new GraphicsBuffer(
+                GraphicsBuffer.Target.Structured,
+                prototypeCount,
+                Marshal.SizeOf(typeof(int)));
 
             _cachedDrawCommands = new GraphicsBuffer.IndirectDrawIndexedArgs[prototypeCount];
             _cachedOffsets = new int[prototypeCount];
 
             if (_mrParams.IsVATEnable)
             {
-                _vatClipsDataBuffer = new ComputeBuffer(_mrData.AtlasData.allClips.Length, Marshal.SizeOf(typeof(VATAtlasAnimationClip)));
+                _vatClipsDataBuffer = new GraphicsBuffer(
+                    GraphicsBuffer.Target.Structured,
+                    _mrData.AtlasData.allClips.Length,
+                    Marshal.SizeOf(typeof(VATAtlasAnimationClip)));
             }
         }
 
@@ -296,7 +306,8 @@ namespace MassRendererSystem
                 _mrParams.FrustumCullingShader,
                 _mrParams.InstanceCount,
                 _mrData.PrototypeMeshes.Count,
-                _mrParams.BoundingSphereRadius);
+                _mrParams.BoundingSphereRadius,
+                _mrParams.MaxRenderDistance);
 
             _frustumCuller.Initialize(_instanceDataBuffer, instanceCounts, segments, _cachedDrawCommands);
             _frustumCuller.SetGlobalTransform(_globalTransform);
@@ -307,8 +318,8 @@ namespace MassRendererSystem
         /// <summary>
         /// Creates and populates the indirect draw commands buffer.
         /// Uses cached arrays to avoid runtime allocations.
-        /// When frustum culling is enabled, the buffer also has CopyDestination target
-        /// so that Graphics.CopyBuffer can write patched draw args from the staging buffer.
+        /// When frustum culling is enabled, the buffer also has Structured target
+        /// so that the compute shader can write directly into it (no staging/copy).
         /// </summary>
         /// <param name="uniqMeshesCount">Number of unique mesh prototypes.</param>
         /// <param name="meshesPerPrototype">Array of instance counts per prototype.</param>
@@ -318,17 +329,34 @@ namespace MassRendererSystem
             bool needsCulling = _mrParams.IsFrustumCullingEnabled && _mrParams.FrustumCullingShader != null;
 
             GraphicsBuffer.Target target = needsCulling
-                ? GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.CopyDestination
+                ? GraphicsBuffer.Target.IndirectArguments | GraphicsBuffer.Target.Structured
                 : GraphicsBuffer.Target.IndirectArguments;
 
             _multiDrawCommandsBuffer = new GraphicsBuffer(
                 target,
-                uniqMeshesCount,
-                GraphicsBuffer.IndirectDrawIndexedArgs.size);
+                needsCulling ? uniqMeshesCount * (GraphicsBuffer.IndirectDrawIndexedArgs.size / sizeof(uint)) : uniqMeshesCount,
+                needsCulling ? sizeof(uint) : GraphicsBuffer.IndirectDrawIndexedArgs.size);
 
             PopulateIndirectArgs(meshesData, meshesPerPrototype, _cachedDrawCommands);
 
-            _multiDrawCommandsBuffer.SetData(_cachedDrawCommands);
+            if (needsCulling)
+            {
+                uint[] flatArgs = new uint[uniqMeshesCount * 5];
+                for (int i = 0; i < uniqMeshesCount; i++)
+                {
+                    int offset = i * 5;
+                    flatArgs[offset + 0] = _cachedDrawCommands[i].indexCountPerInstance;
+                    flatArgs[offset + 1] = _cachedDrawCommands[i].instanceCount;
+                    flatArgs[offset + 2] = _cachedDrawCommands[i].startIndex;
+                    flatArgs[offset + 3] = _cachedDrawCommands[i].baseVertexIndex;
+                    flatArgs[offset + 4] = _cachedDrawCommands[i].startInstance;
+                }
+                _multiDrawCommandsBuffer.SetData(flatArgs);
+            }
+            else
+            {
+                _multiDrawCommandsBuffer.SetData(_cachedDrawCommands);
+            }
         }
 
         /// <summary>

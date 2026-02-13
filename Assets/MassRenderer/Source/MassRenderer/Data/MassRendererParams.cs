@@ -51,6 +51,13 @@ namespace MassRendererSystem.Data
         public float BoundingSphereRadius { get; set; }
 
         /// <summary>
+        /// Maximum distance from the camera at which instances are rendered.
+        /// Instances beyond this distance are culled by the compute shader.
+        /// Set to 0 to disable distance culling. Default: 0 (disabled).
+        /// </summary>
+        public float MaxRenderDistance { get; set; }
+
+        /// <summary>
         /// Camera used for frustum culling plane extraction.
         /// If null, Camera.main will be used at runtime.
         /// </summary>
@@ -70,6 +77,7 @@ namespace MassRendererSystem.Data
             IsFrustumCullingEnabled = false;
             FrustumCullingShader = null;
             BoundingSphereRadius = 1f;
+            MaxRenderDistance = 0f;
             CullingCamera = null;
         }
 
@@ -89,6 +97,7 @@ namespace MassRendererSystem.Data
             IsFrustumCullingEnabled = false;
             FrustumCullingShader = null;
             BoundingSphereRadius = 1f;
+            MaxRenderDistance = 0f;
             CullingCamera = null;
         }
     }

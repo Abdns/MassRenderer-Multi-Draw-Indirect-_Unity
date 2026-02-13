@@ -9,7 +9,7 @@ using Random = UnityEngine.Random;
 public class GrassSimulation
 {
     private readonly RenderStaticData _data;
-    private readonly ComputeBuffer _unitBuffer;
+    private readonly GraphicsBuffer _unitBuffer;
     private readonly int _totalUnits;
 
     private readonly Vector2 _areaSize;
@@ -17,7 +17,7 @@ public class GrassSimulation
 
     public int[] InstanceCounts { get; private set; }
 
-    public GrassSimulation(RenderStaticData data, ComputeBuffer unitBuffer, int unitCount, Vector2 areaSize, float jitter)
+    public GrassSimulation(RenderStaticData data, GraphicsBuffer unitBuffer, int unitCount, Vector2 areaSize, float jitter)
     {
         _data = data;
         _unitBuffer = unitBuffer;

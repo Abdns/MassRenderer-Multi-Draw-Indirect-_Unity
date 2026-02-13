@@ -4,22 +4,25 @@
 
 #define CULL_BLOCK_SIZE 128
 
-float4 _FrustumPlanes[6];
-float  _BoundingSphereRadius;
-int    _TotalInstanceCount;
-int    _PrototypeCount;
-int    _CommandCount;
+float4   _FrustumPlanes[6];
+float    _BoundingSphereRadius;
+int      _TotalInstanceCount;
+int      _PrototypeCount;
+int      _CommandCount;
 
 float4x4 _CullGlobalTransform;
+float    _GlobalScale;           
+float4   _CameraPosition;        
+float    _MaxRenderDistanceSq;   
 
 struct InstanceData
 {
-    int      meshIndex;
-    int      textureSkinIndex;
-    int      animationIndex;
-    float    animationSpeed;
+    uint     packedMeshSkin;    // lower 16 = meshIndex, upper 16 = textureSkinIndex
+    uint     packedAnimData;   // lower 16 = animationIndex, upper 16 = animationSpeed (half)
     float4x4 objectToWorld;
 };
+
+int GetMeshIndex(InstanceData d) { return (int)(d.packedMeshSkin & 0xFFFF); }
 
 StructuredBuffer<InstanceData>   _InputBuffer;
 RWStructuredBuffer<InstanceData> _OutputBuffer;
@@ -71,12 +74,19 @@ void FrustumCull(uint3 id : SV_DispatchThreadID)
     float3 worldPos = worldPos4.xyz;
 
     float instanceScale = GetMaxScale(instance.objectToWorld);
-    float globalScale = GetMaxScale(_CullGlobalTransform);
-    float effectiveRadius = _BoundingSphereRadius * instanceScale * globalScale;
+    float effectiveRadius = _BoundingSphereRadius * instanceScale * _GlobalScale;
+
+    if (_MaxRenderDistanceSq > 0.0)
+    {
+        float3 diff = worldPos - _CameraPosition.xyz;
+        float distSq = dot(diff, diff);
+        if (distSq > _MaxRenderDistanceSq)
+            return;
+    }
 
     if (IsInsideFrustum(worldPos, effectiveRadius))
     {
-        uint protoIndex = (uint)instance.meshIndex;
+        uint protoIndex = (uint)GetMeshIndex(instance);
         uint visibleIndex;
         InterlockedAdd(_VisibleCountPerPrototype[protoIndex], 1, visibleIndex);
 
